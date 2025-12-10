@@ -183,9 +183,30 @@ def calculate_performance(vehicle: Any) -> Dict[str, Any]:
     timp_0_100 = float(timp_demarare[-1])
     spatiu_0_100 = float(spatiu_demarare[-1])
 
-    # Viteza maximă (unde accelerația devine 0)
-    v_max_idx = np.argmin(acceleratii_envelope)
-    v_max = float(viteze_demarare[v_max_idx])
+    # Viteza maximă - calculată din ultima treaptă la turație maximă
+    i_min = i_cv[-1] * i_0  # Raport minim (ultima treaptă)
+    v_max_teoretica = (np.pi * r_d * n_max) / (30 * i_min) * 3.6  # km/h
+
+    # Alternativ: găsim viteza unde D = f (accelerație 0)
+    # Căutăm în caracteristica dinamică a ultimei trepte
+    ultima_treapta = caracteristica_dinamica[-1]
+    viteze_ultima = np.array(ultima_treapta["viteze_kmh"])
+    factor_d_ultima = np.array(ultima_treapta["factor_dinamic"])
+
+    # Găsim viteza maximă prin interpolare liniară unde D = f
+    # Căutăm punctul de intersecție (unde D trece de la > f la < f)
+    v_max = v_max_teoretica  # valoare implicită
+    for i in range(len(factor_d_ultima) - 1):
+        if factor_d_ultima[i] >= f and factor_d_ultima[i + 1] < f:
+            # Interpolare liniară pentru a găsi exact unde D = f
+            v1, v2 = viteze_ultima[i], viteze_ultima[i + 1]
+            d1, d2 = factor_d_ultima[i], factor_d_ultima[i + 1]
+            # v_max = v1 + (f - d1) * (v2 - v1) / (d2 - d1)
+            if d2 != d1:
+                v_max = float(v1 + (f - d1) * (v2 - v1) / (d2 - d1))
+            else:
+                v_max = float(v1)
+            break
 
     # Accelerația maximă
     a_max = float(np.max(acceleratii_envelope))
