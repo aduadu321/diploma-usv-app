@@ -1,19 +1,174 @@
-import { useState } from 'react'
-import { Download, RefreshCw } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Download, RefreshCw, AlertCircle, Loader2 } from 'lucide-react'
+import { useVehicleStore } from '../../store/vehicleStore'
+import { useAppStore } from '../../store/appStore'
+import TractionChart from './TractionChart'
+import PowerChart from './PowerChart'
+import DynamicChart from './DynamicChart'
+import AccelerationChart from './AccelerationChart'
+import DemarareChart from './DemarareChart'
+import EngineChart from './EngineChart'
 
-type ChartType = 'tractiune' | 'puteri' | 'dinamic' | 'acceleratii' | 'demarare' | 'franare'
+type ChartType = 'motor' | 'tractiune' | 'puteri' | 'dinamic' | 'acceleratii' | 'demarare'
+
+interface CalculationResults {
+  tractiune?: any
+  performante?: any
+}
 
 export default function ChartsPanel() {
-  const [activeChart, setActiveChart] = useState<ChartType>('tractiune')
+  const [activeChart, setActiveChart] = useState<ChartType>('motor')
+  const [results, setResults] = useState<CalculationResults | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { vehicle } = useVehicleStore()
+  const { backendConnected } = useAppStore()
 
   const charts = [
+    { id: 'motor', label: 'Caracteristica Motor', description: 'Pe, Me = f(n)' },
     { id: 'tractiune', label: 'Caracteristica de Tracțiune', description: 'Ft = f(v)' },
     { id: 'puteri', label: 'Caracteristica Puterilor', description: 'P = f(v)' },
     { id: 'dinamic', label: 'Caracteristica Dinamică', description: 'D = f(v)' },
     { id: 'acceleratii', label: 'Caracteristica Accelerațiilor', description: 'a = f(v)' },
-    { id: 'demarare', label: 'Timp/Spațiu Demarare', description: 't, s = f(v)' },
-    { id: 'franare', label: 'Caracteristica Frânare', description: 'afr, sfr = f(v)' }
+    { id: 'demarare', label: 'Timp/Spațiu Demarare', description: 't, s = f(v)' }
   ] as const
+
+  const fetchCalculations = async () => {
+    if (!backendConnected) {
+      setError('Backend Python nu este conectat')
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const [tractionRes, performanceRes] = await Promise.all([
+        fetch('http://localhost:8000/calculate/tractiune', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(vehicle)
+        }),
+        fetch('http://localhost:8000/calculate/performante', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(vehicle)
+        })
+      ])
+
+      if (!tractionRes.ok || !performanceRes.ok) {
+        throw new Error('Eroare la calculul datelor')
+      }
+
+      const tractiune = await tractionRes.json()
+      const performante = await performanceRes.json()
+
+      setResults({ tractiune, performante })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Eroare necunoscută')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (backendConnected) {
+      fetchCalculations()
+    }
+  }, [backendConnected])
+
+  const renderChart = () => {
+    if (isLoading) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+          <span className="ml-2 text-gray-500">Se calculează...</span>
+        </div>
+      )
+    }
+
+    if (error) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-2" />
+            <p className="text-red-500">{error}</p>
+            <button
+              onClick={fetchCalculations}
+              className="mt-4 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+            >
+              Reîncearcă
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    if (!results) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <p className="text-gray-500 mb-4">Apasă pentru a genera graficele</p>
+            <button
+              onClick={fetchCalculations}
+              disabled={!backendConnected}
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+            >
+              Calculează
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    switch (activeChart) {
+      case 'motor':
+        return results.tractiune?.caracteristica_motor ? (
+          <EngineChart
+            data={results.tractiune.caracteristica_motor}
+            putereMax={results.tractiune.parametri_motor.putere_maxima_kW}
+            turatiePutere={results.tractiune.parametri_motor.turatie_putere_max}
+            cuplMax={results.tractiune.parametri_motor.cuplu_maxim_calculat_Nm}
+            turatieCuplu={results.tractiune.parametri_motor.turatie_cuplu_max || 4000}
+          />
+        ) : null
+
+      case 'tractiune':
+        return results.performante?.caracteristica_tractiune ? (
+          <TractionChart
+            data={results.performante.caracteristica_tractiune}
+            showResistance={true}
+          />
+        ) : null
+
+      case 'puteri':
+        return results.performante?.caracteristica_puteri ? (
+          <PowerChart data={results.performante.caracteristica_puteri} />
+        ) : null
+
+      case 'dinamic':
+        return results.performante?.caracteristica_dinamica ? (
+          <DynamicChart
+            data={results.performante.caracteristica_dinamica}
+            coefRulare={vehicle.pneu.coefRulare}
+          />
+        ) : null
+
+      case 'acceleratii':
+        return results.performante?.caracteristica_acceleratii ? (
+          <AccelerationChart data={results.performante.caracteristica_acceleratii} />
+        ) : null
+
+      case 'demarare':
+        return results.performante?.demarare ? (
+          <DemarareChart data={results.performante.demarare} />
+        ) : null
+
+      default:
+        return null
+    }
+  }
 
   return (
     <div className="h-full flex flex-col">
@@ -24,12 +179,16 @@ export default function ChartsPanel() {
             Grafice și Diagrame
           </h2>
           <p className="text-gray-500 dark:text-gray-400">
-            Conform Cap. 5 - Performanțele automobilului
+            Conform Cap. 4-5 - Tracțiune și Performanțe
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
-            <RefreshCw className="w-4 h-4" />
+          <button
+            onClick={fetchCalculations}
+            disabled={isLoading || !backendConnected}
+            className="flex items-center gap-2 px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Actualizează
           </button>
           <button className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
@@ -58,54 +217,48 @@ export default function ChartsPanel() {
       </div>
 
       {/* Chart area */}
-      <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm">
-        <div className="h-full flex items-center justify-center border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg">
-          <div className="text-center">
-            <p className="text-gray-500 dark:text-gray-400 mb-2">
-              Graficul va fi afișat aici după efectuarea calculelor
-            </p>
-            <p className="text-sm text-gray-400 dark:text-gray-500">
-              Plotly.js - {charts.find(c => c.id === activeChart)?.label}
-            </p>
-            <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-              <p className="text-xs text-gray-500 font-mono">
-                {`<Plot data={...} layout={...} />`}
+      <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden min-h-[400px]">
+        {renderChart()}
+      </div>
+
+      {/* Performance summary */}
+      {results?.performante?.performante_cheie && (
+        <div className="mt-4 p-4 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
+          <h4 className="font-medium text-gray-800 dark:text-white mb-3">Performanțe Cheie</h4>
+          <div className="grid grid-cols-5 gap-4 text-sm">
+            <div className="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+              <p className="text-gray-500 dark:text-gray-400">Viteză max</p>
+              <p className="text-xl font-bold text-gray-800 dark:text-white">
+                {results.performante.performante_cheie.viteza_maxima_kmh} km/h
+              </p>
+            </div>
+            <div className="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+              <p className="text-gray-500 dark:text-gray-400">0-100 km/h</p>
+              <p className="text-xl font-bold text-gray-800 dark:text-white">
+                {results.performante.performante_cheie.timp_0_100_s} s
+              </p>
+            </div>
+            <div className="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+              <p className="text-gray-500 dark:text-gray-400">Accelerație max</p>
+              <p className="text-xl font-bold text-gray-800 dark:text-white">
+                {results.performante.performante_cheie.acceleratie_maxima_m_s2} m/s²
+              </p>
+            </div>
+            <div className="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+              <p className="text-gray-500 dark:text-gray-400">Pantă max</p>
+              <p className="text-xl font-bold text-gray-800 dark:text-white">
+                {results.performante.performante_cheie.panta_maxima_grade}°
+              </p>
+            </div>
+            <div className="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+              <p className="text-gray-500 dark:text-gray-400">Spațiu 0-100</p>
+              <p className="text-xl font-bold text-gray-800 dark:text-white">
+                {results.performante.performante_cheie.spatiu_0_100_m} m
               </p>
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Legend info */}
-      <div className="mt-4 p-4 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
-        <h4 className="font-medium text-gray-800 dark:text-white mb-2">Legendă</h4>
-        <div className="flex gap-4 text-sm">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-blue-500 rounded"></div>
-            <span className="text-gray-600 dark:text-gray-400">Treapta I</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-green-500 rounded"></div>
-            <span className="text-gray-600 dark:text-gray-400">Treapta II</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-yellow-500 rounded"></div>
-            <span className="text-gray-600 dark:text-gray-400">Treapta III</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-orange-500 rounded"></div>
-            <span className="text-gray-600 dark:text-gray-400">Treapta IV</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-red-500 rounded"></div>
-            <span className="text-gray-600 dark:text-gray-400">Treapta V</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-gray-500 rounded border-dashed"></div>
-            <span className="text-gray-600 dark:text-gray-400">Rezistențe</span>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
